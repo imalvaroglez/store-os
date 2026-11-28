@@ -45,6 +45,15 @@ function rowName(row: StockRow): string {
   return row.variantColor ? `${row.productName} · ${row.variantColor}` : row.productName;
 }
 
+// #579 — one line per row, on every row: fixed capture tracks keep Cantidad,
+// Precio de etiqueta and the action on the same line and the same vertical
+// axis; the name cell takes the remaining width (wraps, never truncates).
+// Mobile recomposes instead of shrinking: the name spans the full width above
+// the controls, which keep their tracks.
+const ROW_GRID =
+  "grid grid-cols-[5rem_7rem_minmax(0,1fr)] items-end gap-x-2 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5rem_7rem_6.5rem]";
+const ROW_NAME_CELL = "min-w-0 col-span-3 sm:col-span-1";
+
 /** The shelf rows of one design, with the point's level price per variant. */
 function rowsForProduct(product: Product, tierId: string): StockRow[] {
   const variants = product.variants ?? [];
@@ -305,73 +314,11 @@ export function StockPointDialog({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <div className="grid items-start gap-4 md:grid-cols-2">
-          {lines.length > 0 ? (
-            <section aria-label="Piezas para surtir" className="order-1 min-w-0 md:order-2">
-              <div className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-edge">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <p className="text-sm font-semibold text-on-surface">Piezas para surtir</p>
-                  <p className="text-xs text-on-surface-soft">
-                    {totalUnits} {totalUnits === 1 ? "pieza" : "piezas"} en {lines.length}{" "}
-                    {lines.length === 1 ? "renglón" : "renglones"} · destino {point.name}
-                  </p>
-                </div>
-                {lines.map((line) => (
-                  <div
-                    key={line.key}
-                    className="flex flex-wrap items-end justify-between gap-2 border-b border-rule pb-2 last:border-0"
-                  >
-                    <div className="min-w-0 flex-1 basis-40">
-                      <p className="text-sm font-medium text-on-surface">{rowName(line.row)}</p>
-                      <p className="text-xs text-on-surface-soft">
-                        {line.row.available} en almacén ·{" "}
-                        {line.row.costCents !== undefined
-                          ? `costo ${formatMoneyExact(pesos(line.row.costCents))}`
-                          : "costo pendiente"}
-                      </p>
-                      {lineErrors[line.key] ? (
-                        <p className="text-xs text-danger">{lineErrors[line.key]}</p>
-                      ) : null}
-                    </div>
-                    <div className="w-20">
-                      <TextField
-                        label="Cantidad"
-                        inputMode="numeric"
-                        placeholder="0"
-                        aria-label={`Cantidad a surtir de ${rowName(line.row)}`}
-                        value={line.qty}
-                        onChange={(e) =>
-                          updateLine(line.key, { qty: sanitizeIntegerInput(e.target.value) })
-                        }
-                        inputRef={(el) => {
-                          if (el) lineQtyRefs.current.set(line.key, el);
-                          else lineQtyRefs.current.delete(line.key);
-                        }}
-                      />
-                    </div>
-                    <div className="w-28">
-                      <TextField
-                        label="Precio de etiqueta"
-                        inputMode="decimal"
-                        aria-label={`Precio de etiqueta a surtir de ${rowName(line.row)}`}
-                        value={line.price}
-                        onChange={(e) => updateLine(line.key, { price: e.target.value })}
-                      />
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Quitar ${rowName(line.row)}`}
-                      onClick={() => removeLine(line.key)}
-                    >
-                      Quitar
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
-          <section aria-label="Disponible en almacén" className="order-2 min-w-0 md:order-1">
+        {/* #579 — the results own the whole usable dialog width: a side
+            summary halves it and forces the capture controls onto a second
+            line. «Piezas para surtir» stacks BELOW the results instead. */}
+        <div className="space-y-4">
+          <section aria-label="Disponible en almacén" className="min-w-0">
             <div className="max-h-[45vh] space-y-3 overflow-y-auto pr-1 md:max-h-[60vh]">
               {groups.length === 0 ? (
                 <p className="text-sm text-on-surface-soft">
@@ -389,11 +336,8 @@ export function StockPointDialog({
                       const added = lines.some((line) => line.key === row.key);
                       const out = row.available <= 0;
                       return (
-                        <div
-                          key={row.key}
-                          className="flex flex-wrap items-end justify-between gap-2 border-b border-rule pb-2 last:border-0"
-                        >
-                          <div className="min-w-0 flex-1 basis-40">
+                        <div key={row.key} className={`${ROW_GRID} border-b border-rule pb-2 last:border-0`}>
+                          <div className={ROW_NAME_CELL}>
                             <p className="text-sm font-medium text-on-surface">
                               {row.variantColor ?? row.productName}
                             </p>
@@ -407,48 +351,45 @@ export function StockPointDialog({
                               <p className="text-xs text-danger">{rowErrors[row.key]}</p>
                             ) : null}
                           </div>
-                          <div className="w-20">
-                            <TextField
-                              label="Cantidad"
-                              inputMode="numeric"
-                              placeholder="0"
-                              disabled={out}
-                              aria-label={`Cantidad de ${rowName(row)}`}
-                              value={drafts[row.key]?.qty ?? ""}
-                              onChange={(e) =>
-                                setDrafts((prev) => ({
-                                  ...prev,
-                                  [row.key]: {
-                                    ...prev[row.key],
-                                    qty: sanitizeIntegerInput(e.target.value),
-                                  },
-                                }))
-                              }
-                            />
-                          </div>
-                          <div className="w-28">
-                            <TextField
-                              label="Precio de etiqueta"
-                              inputMode="decimal"
-                              placeholder={row.suggestedPrice !== undefined ? String(row.suggestedPrice) : "sin sugerido"}
-                              disabled={out}
-                              hint={
-                                row.suggestedPrice === undefined
-                                  ? "Sin precio sugerido en este nivel; captura el de etiqueta."
-                                  : undefined
-                              }
-                              aria-label={`Precio de etiqueta de ${rowName(row)}`}
-                              value={draftPriceOf(row)}
-                              onChange={(e) =>
-                                setDrafts((prev) => ({
-                                  ...prev,
-                                  [row.key]: { ...prev[row.key], price: e.target.value },
-                                }))
-                              }
-                            />
-                          </div>
+                          <TextField
+                            label="Cantidad"
+                            inputMode="numeric"
+                            placeholder="0"
+                            disabled={out}
+                            aria-label={`Cantidad de ${rowName(row)}`}
+                            value={drafts[row.key]?.qty ?? ""}
+                            onChange={(e) =>
+                              setDrafts((prev) => ({
+                                ...prev,
+                                [row.key]: {
+                                  ...prev[row.key],
+                                  qty: sanitizeIntegerInput(e.target.value),
+                                },
+                              }))
+                            }
+                          />
+                          <TextField
+                            label="Precio de etiqueta"
+                            inputMode="decimal"
+                            placeholder={row.suggestedPrice !== undefined ? String(row.suggestedPrice) : "sin sugerido"}
+                            disabled={out}
+                            hint={
+                              row.suggestedPrice === undefined
+                                ? "Sin precio sugerido en este nivel; captura el de etiqueta."
+                                : undefined
+                            }
+                            aria-label={`Precio de etiqueta de ${rowName(row)}`}
+                            value={draftPriceOf(row)}
+                            onChange={(e) =>
+                              setDrafts((prev) => ({
+                                ...prev,
+                                [row.key]: { ...prev[row.key], price: e.target.value },
+                              }))
+                            }
+                          />
                           <Button
                             size="sm"
+                            className="justify-self-end self-end"
                             disabled={out || added}
                             onClick={() => addRow(row)}
                             aria-label={added ? undefined : `Agregar ${rowName(row)}`}
@@ -463,6 +404,65 @@ export function StockPointDialog({
               )}
             </div>
           </section>
+          {lines.length > 0 ? (
+            <section aria-label="Piezas para surtir" className="min-w-0">
+              <div className="space-y-2 rounded-xl bg-surface p-3 ring-1 ring-edge">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-sm font-semibold text-on-surface">Piezas para surtir</p>
+                  <p className="text-xs text-on-surface-soft">
+                    {totalUnits} {totalUnits === 1 ? "pieza" : "piezas"} en {lines.length}{" "}
+                    {lines.length === 1 ? "renglón" : "renglones"} · destino {point.name}
+                  </p>
+                </div>
+                {lines.map((line) => (
+                  <div key={line.key} className={`${ROW_GRID} border-b border-rule pb-2 last:border-0`}>
+                    <div className={ROW_NAME_CELL}>
+                      <p className="text-sm font-medium text-on-surface">{rowName(line.row)}</p>
+                      <p className="text-xs text-on-surface-soft">
+                        {line.row.available} en almacén ·{" "}
+                        {line.row.costCents !== undefined
+                          ? `costo ${formatMoneyExact(pesos(line.row.costCents))}`
+                          : "costo pendiente"}
+                      </p>
+                      {lineErrors[line.key] ? (
+                        <p className="text-xs text-danger">{lineErrors[line.key]}</p>
+                      ) : null}
+                    </div>
+                    <TextField
+                      label="Cantidad"
+                      inputMode="numeric"
+                      placeholder="0"
+                      aria-label={`Cantidad a surtir de ${rowName(line.row)}`}
+                      value={line.qty}
+                      onChange={(e) =>
+                        updateLine(line.key, { qty: sanitizeIntegerInput(e.target.value) })
+                      }
+                      inputRef={(el) => {
+                        if (el) lineQtyRefs.current.set(line.key, el);
+                        else lineQtyRefs.current.delete(line.key);
+                      }}
+                    />
+                    <TextField
+                      label="Precio de etiqueta"
+                      inputMode="decimal"
+                      aria-label={`Precio de etiqueta a surtir de ${rowName(line.row)}`}
+                      value={line.price}
+                      onChange={(e) => updateLine(line.key, { price: e.target.value })}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="justify-self-end self-end"
+                      aria-label={`Quitar ${rowName(line.row)}`}
+                      onClick={() => removeLine(line.key)}
+                    >
+                      Quitar
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </div>
       </div>
     </Dialog>

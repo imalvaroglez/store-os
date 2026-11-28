@@ -17,7 +17,7 @@ export default defineConfig({
   testDir: "./e2e",
   // Anchored names so build-smoke.spec.ts (default-config-only) is NOT matched
   // by the "smoke" alternative — it must not run under the emulator config.
-  testMatch: /(^|\/)(firebase|public-catalog|member-invite|purchase-ux2|purchase-ticket-flow|functions|smoke|responsive|theme|pricing-strategy|admin-areas)\.spec\.ts$/,
+  testMatch: /(^|\/)(firebase|public-catalog|member-invite|purchase-ux2|purchase-ticket-flow|functions|smoke|responsive|theme|pricing-strategy|admin-areas|stock-point-dialog)\.spec\.ts$/,
   globalSetup: "./e2e/firebase-global-setup.ts",
   timeout: 40_000,
   // Emulator failures must surface; deterministic fixture setup avoids retries.
@@ -54,10 +54,12 @@ export default defineConfig({
     },
     // firebase.spec + public-catalog.spec: auth/bootstrap + anonymous catalog.
     // Runs last; self-contained (firebase.spec wipes + provisions in beforeAll,
-    // public-catalog REST-seeds its own projection).
+    // public-catalog REST-seeds its own projection). stock-point-dialog seeds
+    // its own store in beforeAll and must stay AFTER the wiping specs
+    // (alphabetical order within this project guarantees it).
     {
       name: "foundation",
-      testMatch: /(^|\/)(firebase|public-catalog|member-invite|purchase-ux2|functions)\.spec\.ts$/,
+      testMatch: /(^|\/)(firebase|public-catalog|member-invite|purchase-ux2|functions|stock-point-dialog)\.spec\.ts$/,
     },
   ],
 });
