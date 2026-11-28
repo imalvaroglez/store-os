@@ -1,5 +1,14 @@
 [
   {
+    "version": "1.24.4",
+    "date": "2026.11.28",
+    "title": "Captura más clara al surtir un punto",
+    "notes": [
+      "Puntos de venta. En «Surtir del almacén», cada producto o variante muestra la cantidad, el precio de etiqueta y «Agregar» en la misma fila cuando usas una computadora.",
+      "«Piezas para surtir» aparece debajo de los resultados. Puedes seguir buscando mientras revisas lo que agregaste y surtir todas las piezas con una sola confirmación."
+    ]
+  },
+  {
     "version": "1.24.3",
     "date": "2026.11.27",
     "title": "Corrige el corte de tu punto sin volver a capturar",
