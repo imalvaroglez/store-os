@@ -44,11 +44,14 @@ import type {
   RegisterPointCutPaymentResult,
   AnnulPointCutParams,
   AnnulPointCutResult,
+  CorrectPointCutParams,
+  CorrectPointCutResult,
 } from "./firebase/pointFunctions";
 import {
   registerPointCutTrusted,
   registerPointCutPaymentTrusted,
   annulPointCutTrusted,
+  correctPointCutTrusted,
   stockPointTrusted,
   withdrawFromPointTrusted,
   deliverExhibitorsTrusted,
@@ -481,6 +484,9 @@ type StoreContextValue = {
   registerPointCutPayment: (params: RegisterPointCutPaymentParams) => Promise<RegisterPointCutPaymentResult>;
   /** #524: annul the latest unpaid corte (motive required). */
   annulPointCut: (params: AnnulPointCutParams) => Promise<AnnulPointCutResult>;
+  /** #583: correct the latest unpaid corte's capture in one atomic
+   * replacement (motive required; date/commission stay the original's). */
+  correctPointCut: (params: CorrectPointCutParams) => Promise<CorrectPointCutResult>;
   /** #524: move available warehouse pieces to the point (label price
    * confirmed by the operator); republishes public availability after. */
   stockPoint: (params: { storeId: string; pointId: string; physicalDate: string; intentId: string; lines: StockPointLine[] }) => Promise<StockPointResult>;
@@ -1748,6 +1754,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     annulPointCut: async (params) => {
       requireAuthenticatedUser();
       return annulPointCutTrusted(params);
+    },
+    correctPointCut: async (params) => {
+      requireAuthenticatedUser();
+      return correctPointCutTrusted(params);
     },
     stockPoint: async (params) => {
       requireAuthenticatedUser();

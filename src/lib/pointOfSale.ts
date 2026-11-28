@@ -280,6 +280,45 @@ export function pointSummaries(
   return summaries;
 }
 
+export type CorteUndoCheck = {
+  canUndo: boolean;
+  reasons: string[];
+};
+
+/**
+ * Can this corte be undone — annulled OR corrected (#583)? The client mirror
+ * of the transactional guard in annulPointCut/correctPointCut: unpaid, not
+ * already annulled, no later operations on the point (restoring its entries
+ * would rewrite history under newer moves) and its month still open. The
+ * ficha uses this so it NEVER offers a confirmation the server will reject.
+ */
+export function corteUndoImpediments(
+  corte: { id: string; status?: string; confirmedAt?: string; effectiveDate?: string },
+  pointOperations: Array<{ id: string; kind: string; status?: string; confirmedAt?: string; effectiveDate?: string; corteId?: string }>,
+  sealedPeriods: ReadonlySet<string>
+): CorteUndoCheck {
+  const reasons: string[] = [];
+  if (corte.status === "cobrado") reasons.push("El corte ya tiene su cobro registrado.");
+  if (corte.status === "anulado") reasons.push("Este corte ya está anulado.");
+  const corteAt = corte.confirmedAt ?? "";
+  for (const op of pointOperations) {
+    if (op.id === corte.id) continue;
+    if ((op.confirmedAt ?? "") > corteAt && op.kind !== "cobro") {
+      reasons.push("Hay movimientos posteriores en este punto; sólo el último corte sin cobro se puede anular o corregir.");
+      break;
+    }
+    if (op.kind === "cobro" && op.corteId === corte.id) {
+      reasons.push("El corte ya tiene su cobro registrado.");
+      break;
+    }
+  }
+  const period = (corte.effectiveDate ?? "").slice(0, 7);
+  if (period && sealedPeriods.has(period)) {
+    reasons.push("El mes de este corte ya tiene un cierre autorizado; el ajuste se registra en la revisión de ajustes de ese cierre.");
+  }
+  return { canUndo: reasons.length === 0, reasons };
+}
+
 export type CorteLineInput = {
   productId: string;
   variantId?: string;
